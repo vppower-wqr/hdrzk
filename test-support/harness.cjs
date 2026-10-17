@@ -11,7 +11,15 @@ const testPassword = 'fixture-pass &+=Ю';
 
 function harness(responder, options = {}) {
     const state = { params: [], components: [], notices: [], requests: [], menu: null,
-        input: null, events: {}, writes: [], focus: [], plugins: [], played: [], playlists: [], transports: [] };
+        input: null, events: {}, writes: [], focus: [], plugins: [], played: [], playlists: [], transports: [],
+        currentVideo: null, currentPlaylist: [], playerOpen: false, nativePending: false };
+    function emitter() {
+        const handlers = {};
+        return {
+            follow(name, callback) { (handlers[name] ||= []).push(callback); },
+            send(name, data = {}) { for (const callback of [...(handlers[name] || [])]) callback(data); }
+        };
+    }
     class XHR {
         constructor() { this.headers = {}; state.transports.push(this); }
         open(method, url) { this.method = method; this.url = url; }
@@ -35,9 +43,68 @@ function harness(responder, options = {}) {
         show(menu) { state.menu = menu; },
         hide() { state.menu = null; },
         closeAll() { state.menu = null; },
+        opened() { return !!state.menu; },
         close() { const menu = state.menu; state.menu = null; if (menu && menu.onBack) menu.onBack(); }
     };
     if (options.legacy) delete select.closeAll;
+    const playerEvents = emitter(), videoEvents = emitter();
+    let playerBack;
+    function destroyPlayer() {
+        state.playerOpen = false;
+        state.currentVideo = null;
+        state.currentPlaylist = [];
+        state.nativePending = false;
+        playerEvents.send('destroy');
+    }
+    const player = {
+        listener: playerEvents,
+        play(video) {
+            let aborted = false;
+            playerEvents.send('create', { data: video, abort() { aborted = true; } });
+            if (aborted) return;
+            state.currentVideo = video;
+            state.playerOpen = true;
+            state.played.push(video);
+            playerEvents.send('start', video);
+        },
+        playlist(items) { state.currentPlaylist = items; state.playlists.push(items); },
+        callback(fn) { playerBack = fn; state.playerBack = () => player.close(); },
+        playdata() { return state.currentVideo; },
+        opened() { return state.playerOpen; },
+        close() {
+            const callback = playerBack;
+            destroyPlayer();
+            if (callback) callback();
+            playerBack = null;
+        }
+    };
+    function currentPosition() {
+        const data = state.currentVideo;
+        return data ? state.currentPlaylist.findIndex(item => item.url === data.url ||
+            (data.episode !== undefined && item.episode === data.episode && item.season === data.season)) : -1;
+    }
+    function selectPlaylistItem(item) {
+        if (!item || state.nativePending) return;
+        function complete() {
+            const items = state.currentPlaylist;
+            destroyPlayer();
+            item.continue_play = true;
+            player.play(item);
+            player.playlist(items);
+            if (item.callback) item.callback();
+        }
+        if (typeof item.url === 'function') {
+            state.nativePending = true;
+            item.url(complete);
+        } else complete();
+    }
+    const playlist = {
+        next() { selectPlaylistItem(state.currentPlaylist[currentPosition() + 1]); },
+        prev() { const index = currentPosition(); if (index > 0) selectPlaylistItem(state.currentPlaylist[index - 1]); },
+        get() { return state.currentPlaylist; }
+    };
+    // Lampa registers its native ended handler before extensions are loaded.
+    videoEvents.follow('ended', () => { if (options.playlistNext && !select.opened()) playlist.next(); });
     function wrap(nodes) {
         return { nodes, length: nodes.length,
             find(selector) { return wrap(nodes.flatMap(n => Array.from(n.querySelectorAll(selector)))); },
@@ -58,10 +125,13 @@ function harness(responder, options = {}) {
         DOMParser, XMLHttpRequest: XHR, $, atob, btoa,
         Lampa: {
             Manifest: manifest,
-            Player: { play(video) { state.played.push(video); }, playlist(items) { state.playlists.push(items); },
-                callback(fn) { state.playerBack = fn; } },
+            Player: player,
+            PlayerPlaylist: playlist,
+            PlayerVideo: { listener: videoEvents },
+            Utils: { hash(value) { return value; } },
+            Timeline: { view(hash) { return { hash }; } },
             SettingsApi: { addComponent(value) { state.components.push(value); }, addParam(value) { state.params.push(value); } },
-            Storage: { field() { return options.noEmail ? '' : 'fixture@example.test'; },
+            Storage: { field(key) { return key === 'playlist_next' ? !!options.playlistNext : options.noEmail ? '' : 'fixture@example.test'; },
                 set(key, value) { state.writes.push({ key, value }); } },
             Noty: { show(message) { state.notices.push(message); } },
             Controller: { toggle(name) { state.focus.push(name); } },
@@ -85,6 +155,11 @@ function harness(responder, options = {}) {
     return { state, context, click, choose, render: $,
         launch(card) { state.plugins[0].onContextLauch(card); },
         longChoose(index) { const menu = state.menu; menu.onLong(menu.items[index]); },
+        ended() { videoEvents.send('ended'); },
+        next() { playlist.next(); },
+        previous() { playlist.prev(); },
+        closePlayer() { player.close(); },
+        externalPlay(video) { player.play(video); player.playlist([video]); },
         login() { click('login'); state.input.callback(testPassword); choose('login'); },
         back() { select.close(); },
         reload() { vm.runInContext(source, context); } };
