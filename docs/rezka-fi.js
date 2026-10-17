@@ -1,5 +1,5 @@
 /*
- * HDRezka 0.2.2 — account login and playback from Lampa movie cards / LG webOS.
+ * HDRezka 0.2.3 — account login and playback from Lampa movie cards / LG webOS.
  * Install through Lampa Extensions. Login: Settings > Rezka.fi: вход.
  * Study reference: https://nb557.github.io/plugins/online_mod.js (2026-10-10).
  * This is a separate implementation. Requests go directly to rezka.fi.
@@ -13,6 +13,7 @@
     var authAlreadyLoaded = !!window.rezka_fi_auth_loaded;
     window.rezka_fi_auth_loaded = true;
 
+    var VERSION = '0.2.3';
     var HOST = 'https://rezka.fi';
     var SECTION = 'rezka_fi_auth';
     var busy = false;
@@ -549,7 +550,7 @@
     }
 
     function registerPlayback() {
-        Lampa.Manifest.plugins = { type: 'video', name: 'HDRezka', version: '0.2.2',
+        Lampa.Manifest.plugins = { type: 'video', name: 'HDRezka', version: VERSION,
             description: 'Просмотр через rezka.fi',
             onContextMenu: function () { return { name: 'Смотреть HDRezka', description: 'rezka.fi' }; },
             onContextLauch: launch };
@@ -577,6 +578,11 @@
         ready = true;
         if (!authAlreadyLoaded) {
             Lampa.SettingsApi.addComponent({ component: SECTION, name: 'Rezka.fi: вход', icon: '' });
+        }
+        addButton('rezka_fi_auth_version', 'Версия плагина: ' + VERSION, function () {
+            message('Загруженная версия HDRezka: ' + VERSION);
+        });
+        if (!authAlreadyLoaded) {
             Lampa.SettingsApi.addParam({ component: SECTION,
                 param: { name: 'rezka_fi_auth_email', type: 'input', values: '', default: '' },
                 field: { name: 'Email или логин', description: 'Для входа только на https://rezka.fi' } });

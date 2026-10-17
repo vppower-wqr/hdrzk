@@ -105,7 +105,7 @@ test('legacy menus and repeated ready/load events remain usable', () => {
     h.state.events.app({ type: 'ready' });
     h.reload();
     assert.equal(h.state.components.length, 1);
-    assert.equal(h.state.params.length, 4);
+    assert.equal(h.state.params.length, 5);
     h.login();
     assert.match(h.state.notices.at(-1), /Premium подтверждён/);
 });
