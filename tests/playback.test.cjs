@@ -33,7 +33,8 @@ test('movie card action searches by title/year, sends voice flags and nonce, and
     h.choose(0);
     assert.equal(h.state.menu.items[0].title, 'Дубляж (RU)');
     h.choose(0);
-    assert.equal(h.state.menu.items[0].title, '1080p · HLS');
+    assert.equal(h.state.menu.items[0].title, '1080p');
+    h.longChoose(0);
     h.choose(1); // Explicit MP4 choice must not be overridden by a global Lampa quality preference.
     assert.equal(h.state.played.length, 1);
     assert.equal(h.state.played[0].url, 'https://cdn.example/1080.mp4');
@@ -98,9 +99,54 @@ test('encoded HDRezka playlist removes known markers and preserves Unicode quali
     const stream = { success: true, url: '#h' + encoded.slice(0, 20) + marker + marker + encoded.slice(20) };
     const h = harness(movieResponder(stream));
     movieQuality(h);
-    assert.equal(h.state.menu.items[0].title, '1080p Тест · MP4');
+    assert.equal(h.state.menu.items[0].title, '1080p Тест');
+    assert.equal(h.state.menu.items[0].subtitle, 'MP4');
     h.choose(0);
     assert.equal(h.state.played[0].url, 'https://cdn.example/full.mp4');
+});
+
+test('duplicate quality labels and formats produce one row per quality while every backup URL stays selectable', () => {
+    const stream = { success: true, url:
+        '[4K]https://cdn.example/4k.mp4 or https://backup.example/4k.mp4 or https://cdn.example/4k.m3u8 or https://backup.example/4k.m3u8,' +
+        '[4k]https://cdn.example/4k.m3u8,' +
+        '[2K]https://cdn.example/2k.m3u8 or https://backup.example/2k.m3u8 or https://cdn.example/2k.mp4 or https://backup.example/2k.mp4,' +
+        '[1080p]https://cdn.example/1080.mp4' };
+    const h = harness(movieResponder(stream));
+    movieQuality(h);
+    assert.deepEqual(Array.from(h.state.menu.items, item => item.title), ['4K', '2K', '1080p']);
+    assert.match(h.state.menu.items[0].subtitle, /^HLS/);
+    h.choose(0);
+    assert.equal(h.state.played[0].url, 'https://cdn.example/4k.m3u8');
+    h.state.playerBack();
+    h.longChoose(0);
+    assert.deepEqual(Array.from(h.state.menu.items, item => item.title), [
+        '4K · HLS · Ссылка 1', '4K · HLS · Ссылка 2', '4K · MP4 · Ссылка 1', '4K · MP4 · Ссылка 2'
+    ]);
+    assert.deepEqual(Array.from(h.state.menu.items, item => item.value.url), [
+        'https://cdn.example/4k.m3u8', 'https://backup.example/4k.m3u8',
+        'https://cdn.example/4k.mp4', 'https://backup.example/4k.mp4'
+    ]);
+    h.back();
+    assert.equal(h.state.menu.title, 'HDRezka · качество');
+    h.longChoose(0); h.choose(3);
+    assert.equal(h.state.played.at(-1).url, 'https://backup.example/4k.mp4');
+    h.state.playerBack();
+    assert.equal(h.state.menu.items.length, 3);
+    h.back();
+    assert.match(h.state.menu.title, /озвучка/);
+});
+
+test('distinct quality labels such as Ultra stay separate and a single available URL needs no submenu', () => {
+    const h = harness(movieResponder({ success: true, url:
+        '[1080p]https://cdn.example/normal.mp4,[1080p Ultra]https://cdn.example/ultra.mp4' }));
+    movieQuality(h);
+    assert.deepEqual(Array.from(h.state.menu.items, item => item.title), ['1080p', '1080p Ultra']);
+    assert.equal(h.state.menu.items[0].subtitle, 'MP4');
+    const menu = h.state.menu;
+    h.longChoose(0);
+    assert.equal(h.state.menu, menu);
+    h.choose(1);
+    assert.equal(h.state.played[0].url, 'https://cdn.example/ultra.mp4');
 });
 
 test('missing localized result retries the original title once and stops on empty results', () => {

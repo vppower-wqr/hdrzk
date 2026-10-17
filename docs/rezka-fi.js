@@ -1,5 +1,5 @@
 /*
- * HDRezka 0.2.0 — account login and playback from Lampa movie cards / LG webOS.
+ * HDRezka 0.2.1 — account login and playback from Lampa movie cards / LG webOS.
  * Install through Lampa Extensions. Login: Settings > Rezka.fi: вход.
  * Study reference: https://nb557.github.io/plugins/online_mod.js (2026-10-10).
  * This is a separate implementation. Requests go directly to rezka.fi.
@@ -358,10 +358,28 @@
             var format = /\.m3u8(?:[?#]|$)/i.test(entry.url) ? 'HLS' : /\.mp4(?:[?#]|$)/i.test(entry.url) ? 'MP4' : 'Видео';
             var number = entry.label.match(/(\d+)\s*(p|k)?/i);
             var rank = number ? Number(number[1]) * (String(number[2]).toLowerCase() === 'k' ? 1000 : 1) : 0;
-            qualities.push({ title: entry.label + ' · ' + format, url: entry.url, rank: rank, format: format });
+            qualities.push({ title: entry.label + ' · ' + format, label: entry.label,
+                url: entry.url, rank: rank, format: format, order: qualities.length });
         });
-        qualities.sort(function (a, b) { return b.rank - a.rank || Number(b.format === 'HLS') - Number(a.format === 'HLS'); });
-        return { qualities: qualities, subtitles: playlistGroups(String(json.subtitle || '')).map(function (item) {
+        qualities.sort(function (a, b) { return b.rank - a.rank || Number(b.format === 'HLS') - Number(a.format === 'HLS') || a.order - b.order; });
+        // Different CDN links and container formats can describe one quality.
+        // Keep every unique URL available through long OK, but one row per label.
+        var grouped = [], byLabel = {};
+        qualities.forEach(function (item) {
+            var key = 'q:' + item.label.toLowerCase();
+            var quality = byLabel[key];
+            if (!quality) {
+                quality = { title: item.label, url: item.url, format: item.format, alternatives: [] };
+                byLabel[key] = quality;
+                grouped.push(quality);
+            }
+            quality.alternatives.push(item);
+        });
+        grouped.forEach(function (quality) {
+            quality.subtitle = quality.format;
+            if (quality.alternatives.length > 1) quality.subtitle += ' · Удерживайте OK: другие варианты';
+        });
+        return { qualities: grouped, subtitles: playlistGroups(String(json.subtitle || '')).map(function (item) {
             return { label: item.label, url: item.url };
         }) };
     }
@@ -381,11 +399,12 @@
         message(error);
     }
 
-    function menu(flow, title, items, select, back) {
+    function menu(flow, title, items, select, back, longSelect) {
         if (flow.cancelled) return;
         Lampa.Select.show({ title: title,
             items: items.map(function (item) { return { title: escapeHtml(item.title), subtitle: escapeHtml(item.subtitle), value: item }; }),
             onSelect: function (item) { if (!flow.cancelled) select(item.value); },
+            onLong: function (item) { if (!flow.cancelled && longSelect) longSelect(item.value); },
             onBack: function () { if (!flow.cancelled) { if (back) back(); else finishFlow(flow); } }
         });
     }
@@ -411,7 +430,7 @@
     }
 
     function chooseQuality(flow, movie, voice, episode, stream, back) {
-        menu(flow, 'HDRezka · качество', stream.qualities, function (quality) {
+        function play(quality) {
             dismiss();
             var title = movie.title;
             if (episode) title += ' · S' + episode.season + ' E' + episode.episode;
@@ -425,7 +444,19 @@
             });
             Lampa.Player.play(video);
             Lampa.Player.playlist([video]);
-        }, back);
+        }
+        menu(flow, 'HDRezka · качество', stream.qualities, play, back, function (quality) {
+            if (quality.alternatives.length < 2) return;
+            var counts = {};
+            var variants = quality.alternatives.map(function (item) {
+                counts[item.format] = (counts[item.format] || 0) + 1;
+                return { title: quality.title + ' · ' + item.format + ' · Ссылка ' + counts[item.format], url: item.url };
+            });
+            dismiss();
+            menu(flow, 'HDRezka · ' + quality.title, variants, play, function () {
+                chooseQuality(flow, movie, voice, episode, stream, back);
+            });
+        });
     }
 
     function getVideo(flow, movie, voice, episode, back) {
@@ -501,7 +532,7 @@
     }
 
     function registerPlayback() {
-        Lampa.Manifest.plugins = { type: 'video', name: 'HDRezka', version: '0.2.0',
+        Lampa.Manifest.plugins = { type: 'video', name: 'HDRezka', version: '0.2.1',
             description: 'Просмотр через rezka.fi',
             onContextMenu: function () { return { name: 'Смотреть HDRezka', description: 'rezka.fi' }; },
             onContextLauch: launch };

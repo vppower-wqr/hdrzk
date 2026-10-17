@@ -84,6 +84,7 @@ function harness(responder, options = {}) {
     }
     return { state, context, click, choose, render: $,
         launch(card) { state.plugins[0].onContextLauch(card); },
+        longChoose(index) { const menu = state.menu; menu.onLong(menu.items[index]); },
         login() { click('login'); state.input.callback(testPassword); choose('login'); },
         back() { select.close(); },
         reload() { vm.runInContext(source, context); } };
