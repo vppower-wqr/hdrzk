@@ -1,0 +1,8 @@
+{
+  "name": "rezka-fi-auth",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {"test": "node --test tests/auth.test.cjs"},
+  "devDependencies": {"linkedom": "0.18.12"},
+  "license": "MIT"
+}
