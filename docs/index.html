@@ -2,19 +2,20 @@
 <html lang="ru">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Rezka.fi: вход для Lampa</title>
+<title>HDRezka для Lampa</title>
 <style>
 body{max-width:740px;margin:56px auto;padding:0 24px;font:18px/1.65 system-ui,sans-serif;background:#171a20;color:#eef0f4}
 a{color:#a6cdff}code{overflow-wrap:anywhere}li{margin:12px 0}.note{padding:16px 20px;background:#242a35;border-radius:12px}
 </style>
-<h1>Rezka.fi: вход</h1>
-<p>Минимальный плагин авторизации для Lampa на LG webOS. Версия 0.1.0.</p>
+<h1>HDRezka для Lampa</h1>
+<p>Просмотр из карточек фильмов и сериалов через rezka.fi. Версия 0.2.0.</p>
 <ol>
-<li>Скопируйте <a id="plugin" href="rezka-fi-auth.js">ссылку на файл плагина</a> в расширения Lampa и перезапустите приложение.</li>
-<li>Откройте <strong>Настройки → Rezka.fi: вход</strong> и укажите email или логин.</li>
-<li>Нажмите <strong>Войти на rezka.fi</strong>, введите пароль и выберите <strong>Войти</strong>.</li>
+<li>Добавьте <a href="https://cdn.jsdelivr.net/gh/vppower-wqr/hdrzk@main/docs/rezka-fi.js">ссылку на плагин</a> в расширения Lampa. Если раньше установлен rezka-fi-auth.js, замените его адрес. Полностью перезапустите приложение.</li>
+<li>Для Premium откройте <strong>Настройки → Rezka.fi: вход</strong>, укажите email/логин и выполните вход. Пароль вводится только в Lampa на вашем устройстве.</li>
+<li>Откройте карточку фильма → <strong>Смотреть → HDRezka</strong>. В старом интерфейсе доступна отдельная кнопка HDRezka.</li>
+<li>Выберите найденный фильм, озвучку и качество. Для сериалов также выберите сезон и серию.</li>
 </ol>
-<p>В плагине есть проверка сессии и выход. Пароль не сохраняется модулем в настройках. Эта страница не принимает данные аккаунта.</p>
-<p class="note">Экспериментальная версия: реальный вход на LG ещё требует проверки. Работа зависит от ограничений запросов и cookies в вашей Lampa. Совместимость с BwaRC не подтверждена.</p>
-<p><a href="https://github.com/vppower-wqr/hdrzk#readme">Инструкция и исходный код</a></p>
+<p>Видео открывается в плеере Lampa. Следующая серия выбирается вручную. Эта страница не принимает данные аккаунта.</p>
+<p class="note">Локальные сценарии проверены с тестовыми ответами. Реальный вход и просмотр на LG ещё требуют проверки: доступ зависит от rezka.fi, CORS и cookies в вашей сборке Lampa.</p>
+<p><a href="https://github.com/vppower-wqr/hdrzk#readme">Инструкция, ограничения и исходный код</a></p>
 </html>

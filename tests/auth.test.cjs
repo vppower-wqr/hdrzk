@@ -1,68 +1,6 @@
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
 const test = require('node:test');
-const vm = require('node:vm');
-const { DOMParser } = require('linkedom');
-const source = fs.readFileSync(path.join(__dirname, '../docs/rezka-fi-auth.js'), 'utf8');
-const GUEST = '<html><body><form id="check-form"><input name="login_name"><input name="login_password" type="password"></form></body></html>';
-const PREMIUM = '<html><body class="other b-premium_user__body"><a href="/logout/">Выйти</a></body></html>';
-const LOGGED = '<html><body><a href="https://rezka.fi/logout/">Выйти</a></body></html>';
-const testPassword = 'fixture-pass &+=Ю';
-
-function harness(responder, options = {}) {
-    const state = { params: [], components: [], notices: [], requests: [], menu: null,
-        input: null, events: {}, writes: [], focus: [] };
-    class XHR {
-        constructor() { this.headers = {}; }
-        open(method, url) { this.method = method; this.url = url; }
-        setRequestHeader(key, value) { this.headers[key] = value; }
-        send(body) {
-            state.requests.push({ method: this.method, url: this.url, body,
-                credentials: this.withCredentials, headers: this.headers });
-            const result = responder(new URL(this.url).pathname, body, this.method);
-            if (result.pending) return;
-            if (result.error) { this.onerror(); return; }
-            this.status = result.status || 200;
-            this.responseURL = result.url || this.url;
-            this.responseText = typeof result.body === 'string' ? result.body : JSON.stringify(result.body);
-            this.onload();
-        }
-    }
-    const select = {
-        show(menu) { state.menu = menu; },
-        hide() { state.menu = null; },
-        closeAll() { state.menu = null; },
-        close() { const menu = state.menu; state.menu = null; if (menu && menu.onBack) menu.onBack(); }
-    };
-    if (options.legacy) delete select.closeAll;
-    const context = {
-        window: { appready: !options.deferred }, DOMParser, XMLHttpRequest: XHR,
-        Lampa: {
-            SettingsApi: { addComponent(value) { state.components.push(value); }, addParam(value) { state.params.push(value); } },
-            Storage: { field() { return options.noEmail ? '' : 'fixture@example.test'; },
-                set(key, value) { state.writes.push({ key, value }); } },
-            Noty: { show(message) { state.notices.push(message); } },
-            Controller: { toggle(name) { state.focus.push(name); } },
-            Select: select,
-            Input: { edit(params, callback) { state.input = { params, callback }; } },
-            Listener: { follow(name, handler) { state.events[name] = handler; } }
-        }
-    };
-    vm.createContext(context);
-    vm.runInContext(source, context);
-    function click(suffix) {
-        state.params.find(p => p.param.name === 'rezka_fi_auth_' + suffix).onChange();
-    }
-    function choose(action) {
-        const menu = state.menu;
-        state.menu = null;
-        menu.onSelect(menu.items.find(i => i.action === action));
-    }
-    return { state, context, click, choose,
-        login() { click('login'); state.input.callback(testPassword); choose('login'); },
-        back() { select.close(); } };
-}
+const { harness, GUEST, PREMIUM, LOGGED, testPassword } = require('../test-support/harness.cjs');
 
 function goodLogin(endpoint) {
     return endpoint === '/ajax/login/' ? { body: { success: true } } : { body: PREMIUM };
@@ -165,7 +103,7 @@ test('legacy menus and repeated ready/load events remain usable', () => {
     const h = harness(goodLogin, { deferred: true, legacy: true });
     h.state.events.app({ type: 'ready' });
     h.state.events.app({ type: 'ready' });
-    vm.runInContext(source, h.context);
+    h.reload();
     assert.equal(h.state.components.length, 1);
     assert.equal(h.state.params.length, 4);
     h.login();
