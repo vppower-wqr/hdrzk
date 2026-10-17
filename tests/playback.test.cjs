@@ -140,13 +140,40 @@ test('distinct quality labels such as Ultra stay separate and a single available
     const h = harness(movieResponder({ success: true, url:
         '[1080p]https://cdn.example/normal.mp4,[1080p Ultra]https://cdn.example/ultra.mp4' }));
     movieQuality(h);
-    assert.deepEqual(Array.from(h.state.menu.items, item => item.title), ['1080p', '1080p Ultra']);
+    assert.deepEqual(Array.from(h.state.menu.items, item => item.title), ['1080p Ultra', '1080p']);
     assert.equal(h.state.menu.items[0].subtitle, 'MP4');
     const menu = h.state.menu;
     h.longChoose(0);
     assert.equal(h.state.menu, menu);
-    h.choose(1);
+    h.choose(0);
     assert.equal(h.state.played[0].url, 'https://cdn.example/ultra.mp4');
+});
+
+test('quality menu starts at the highest available resolution and puts Ultra above regular 1080p regardless of format or response order', () => {
+    for (const include4K of [true, false]) {
+        const h = harness(movieResponder({ success: true, url:
+            '[360p]https://cdn.example/360.m3u8,[1080p]https://cdn.example/1080.m3u8,' +
+            '[720p]https://cdn.example/720.mp4,[1080p Ultra]https://cdn.example/ultra.mp4,' +
+            '[480p]https://cdn.example/480.m3u8' +
+            (include4K ? ',[2K]https://cdn.example/2k.m3u8,[4K]https://cdn.example/4k.mp4' : '') }));
+        movieQuality(h);
+        const expected = ['1080p Ultra', '1080p', '720p', '480p', '360p'];
+        if (include4K) expected.unshift('4K', '2K');
+        assert.deepEqual(Array.from(h.state.menu.items, item => item.title), expected);
+        h.choose(0);
+        assert.equal(h.state.played[0].url, include4K ? 'https://cdn.example/4k.mp4' : 'https://cdn.example/ultra.mp4');
+    }
+});
+
+test('pixel sizes and UHD labels rank by resolution rather than incidental codec numbers', () => {
+    const h = harness(movieResponder({ success: true, url:
+        '[720p H265]https://cdn.example/720.mp4,[1920x1080]https://cdn.example/1080.mp4,' +
+        '[3840×2160]https://cdn.example/2160.mp4,[1440p]https://cdn.example/1440.mp4,' +
+        '[HDR10 8K]https://cdn.example/8k.mp4,[UHD]https://cdn.example/uhd.mp4' }));
+    movieQuality(h);
+    assert.deepEqual(Array.from(h.state.menu.items, item => item.title), [
+        'HDR10 8K', '3840×2160', 'UHD', '1440p', '1920x1080', '720p H265'
+    ]);
 });
 
 test('missing localized result retries the original title once and stops on empty results', () => {

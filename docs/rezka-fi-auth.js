@@ -1,5 +1,5 @@
 /*
- * HDRezka 0.2.1 — account login and playback from Lampa movie cards / LG webOS.
+ * HDRezka 0.2.2 — account login and playback from Lampa movie cards / LG webOS.
  * Install through Lampa Extensions. Login: Settings > Rezka.fi: вход.
  * Study reference: https://nb557.github.io/plugins/online_mod.js (2026-10-10).
  * This is a separate implementation. Requests go directly to rezka.fi.
@@ -330,6 +330,22 @@
         return groups;
     }
 
+    function resolutionRank(label) {
+        var size = label.match(/(\d{3,5})\s*[x×]\s*(\d{3,5})/i);
+        if (size) return Number(size[2]);
+        var pixels = label.match(/\b(\d{3,5})\s*p\b/i);
+        if (pixels) return Number(pixels[1]);
+        var kilo = label.match(/\b(\d+(?:\.\d+)?)\s*k\b/i);
+        if (kilo) {
+            var heights = { '2': 1440, '4': 2160, '8': 4320 };
+            return heights[kilo[1]] || Number(kilo[1]) * 540;
+        }
+        if (/\bUHD\b/i.test(label)) return 2160;
+        if (/\b(?:Full\s*HD|FHD)\b/i.test(label)) return 1080;
+        if (/\bHD\b/i.test(label)) return 720;
+        return 0;
+    }
+
     function streamData(body) {
         var json;
         try { json = JSON.parse(body); }
@@ -356,12 +372,13 @@
             if (seen[entry.url]) return;
             seen[entry.url] = true;
             var format = /\.m3u8(?:[?#]|$)/i.test(entry.url) ? 'HLS' : /\.mp4(?:[?#]|$)/i.test(entry.url) ? 'MP4' : 'Видео';
-            var number = entry.label.match(/(\d+)\s*(p|k)?/i);
-            var rank = number ? Number(number[1]) * (String(number[2]).toLowerCase() === 'k' ? 1000 : 1) : 0;
             qualities.push({ title: entry.label + ' · ' + format, label: entry.label,
-                url: entry.url, rank: rank, format: format, order: qualities.length });
+                url: entry.url, rank: resolutionRank(entry.label), ultra: /\bUltra\b/i.test(entry.label) ? 1 : 0,
+                format: format, order: qualities.length });
         });
-        qualities.sort(function (a, b) { return b.rank - a.rank || Number(b.format === 'HLS') - Number(a.format === 'HLS') || a.order - b.order; });
+        qualities.sort(function (a, b) {
+            return b.rank - a.rank || b.ultra - a.ultra || Number(b.format === 'HLS') - Number(a.format === 'HLS') || a.order - b.order;
+        });
         // Different CDN links and container formats can describe one quality.
         // Keep every unique URL available through long OK, but one row per label.
         var grouped = [], byLabel = {};
@@ -532,7 +549,7 @@
     }
 
     function registerPlayback() {
-        Lampa.Manifest.plugins = { type: 'video', name: 'HDRezka', version: '0.2.1',
+        Lampa.Manifest.plugins = { type: 'video', name: 'HDRezka', version: '0.2.2',
             description: 'Просмотр через rezka.fi',
             onContextMenu: function () { return { name: 'Смотреть HDRezka', description: 'rezka.fi' }; },
             onContextLauch: launch };
