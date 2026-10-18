@@ -20,12 +20,19 @@
     var ready = false;
     var activeFlow = null;
     var playbackSerial = 0;
+    var menuCleanup = null;
 
     function message(value) {
         Lampa.Noty.show(value);
     }
 
+    function resetMenuViewport() {
+        if (menuCleanup) menuCleanup();
+        menuCleanup = null;
+    }
+
     function dismiss() {
+        resetMenuViewport();
         if (Lampa.Select.closeAll) Lampa.Select.closeAll();
         else Lampa.Select.hide();
     }
@@ -422,11 +429,46 @@
 
     function menu(flow, title, items, select, back, longSelect) {
         if (flow.cancelled) return;
+        resetMenuViewport();
+        var menuScroll = null;
+        var viewport = null;
+        function fitViewport() {
+            // Some TV builds leave the select scroll as tall as its contents.
+            // Bound only this menu, keeping Lampa's native remote/wheel scrolling.
+            if (!viewport || !window.innerHeight || window.innerWidth <= 480) return;
+            var top = Math.max(0, viewport.getBoundingClientRect().top);
+            var height = Math.max(1, window.innerHeight - top - Math.ceil(window.innerHeight * 0.03));
+            viewport.style.height = height + 'px';
+            viewport.style.maxHeight = height + 'px';
+            viewport.style.minHeight = '0';
+            viewport.style.flex = '0 0 ' + height + 'px';
+        }
         Lampa.Select.show({ title: title,
             items: items.map(function (item) { return { title: escapeHtml(item.title), subtitle: escapeHtml(item.subtitle), value: item }; }),
-            onSelect: function (item) { if (!flow.cancelled) select(item.value); },
-            onLong: function (item) { if (!flow.cancelled && longSelect) longSelect(item.value); },
-            onBack: function () { if (!flow.cancelled) { if (back) back(); else finishFlow(flow); } }
+            onFullDraw: function (scroll) {
+                menuScroll = scroll;
+                var rendered = scroll.render();
+                viewport = rendered && rendered[0];
+                if (!viewport) return;
+                var previous = { height: viewport.style.height, maxHeight: viewport.style.maxHeight,
+                    minHeight: viewport.style.minHeight, flex: viewport.style.flex };
+                menuCleanup = function () {
+                    for (var key in previous) viewport.style[key] = previous[key];
+                };
+                fitViewport();
+            },
+            onFocus: function (item, target) {
+                fitViewport();
+                if (menuScroll && target) menuScroll.immediate(target, true);
+            },
+            onSelect: function (item) { resetMenuViewport(); if (!flow.cancelled) select(item.value); },
+            onLong: function (item) {
+                if (!flow.cancelled && longSelect) { resetMenuViewport(); longSelect(item.value); }
+            },
+            onBack: function () {
+                resetMenuViewport();
+                if (!flow.cancelled) { if (back) back(); else finishFlow(flow); }
+            }
         });
     }
 
@@ -746,6 +788,7 @@
     function init() {
         if (ready) return;
         ready = true;
+        if (Lampa.Select.listener) Lampa.Select.listener.follow('hide', resetMenuViewport);
         if (!authAlreadyLoaded) {
             Lampa.SettingsApi.addComponent({ component: SECTION, name: 'Rezka.fi: вход', icon: '' });
         }

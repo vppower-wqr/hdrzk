@@ -302,3 +302,45 @@ test('playback registers when an older auth module is already loaded, and repeat
     movieQuality(h); h.choose(0);
     assert.equal(h.state.played.length, 1);
 });
+
+
+test('long voice lists fit a TV viewport, follow focus to the last item and restore shared scroll styles', () => {
+    const voices = Array.from({ length: 40 }, (_, index) =>
+        '<li class="b-translator__item" data-translator_id="' + (index + 10) + '">Voice ' + index + '</li>').join('');
+    const page = MOVIE.replace(/(<[^>]+id="translators-list"[^>]*>)[\s\S]*?(<\/ul>)/, '$1' + voices + '$2');
+    for (const height of [720, 1080, 2160]) {
+        const h = harness(movieResponder(STREAM, page));
+        h.context.window.innerHeight = height;
+        h.context.window.innerWidth = height * 16 / 9;
+        h.launch(CARD); h.choose(0);
+        const menu = h.state.menu;
+        assert.equal(menu.items.length, 40);
+        const original = { height: '', maxHeight: '', minHeight: '', flex: '' };
+        const viewport = { style: { ...original }, getBoundingClientRect: () => ({ top: height * 0.15 }) };
+        const focused = [];
+        const scroll = { render: () => [viewport], immediate: (target, center) => focused.push({ target, center }) };
+        menu.onFullDraw(scroll);
+        assert.ok(parseFloat(viewport.style.height) < height * 0.85);
+        const last = { name: 'last voice' };
+        menu.onFocus(menu.items.at(-1), last);
+        assert.equal(focused.at(-1).target, last);
+        assert.equal(focused.at(-1).center, true);
+        h.back();
+        assert.deepEqual(viewport.style, original);
+        assert.equal(h.state.menu.title, 'Найдено на HDRezka');
+    }
+});
+
+test('selecting a voice clears its viewport overrides before opening the quality menu', () => {
+    const h = harness(movieResponder());
+    h.context.window.innerHeight = 1080;
+    h.context.window.innerWidth = 1920;
+    h.launch(CARD); h.choose(0);
+    const viewport = { style: { height: '900px', maxHeight: '', minHeight: '', flex: '' },
+        getBoundingClientRect: () => ({ top: 120 }) };
+    h.state.menu.onFullDraw({ render: () => [viewport], immediate() {} });
+    h.choose(0);
+    assert.equal(viewport.style.height, '900px');
+    assert.equal(viewport.style.maxHeight, '');
+    assert.equal(h.state.menu.title, 'HDRezka · качество');
+});
