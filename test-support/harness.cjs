@@ -106,15 +106,16 @@ function harness(responder, options = {}) {
     // Lampa registers its native ended handler before extensions are loaded.
     videoEvents.follow('ended', () => { if (options.playlistNext && !select.opened()) playlist.next(); });
     function wrap(nodes) {
-        return { nodes, length: nodes.length,
+        return Object.assign({ nodes, length: nodes.length,
             find(selector) { return wrap(nodes.flatMap(n => Array.from(n.querySelectorAll(selector)))); },
             first() { return wrap(nodes.slice(0, 1)); },
             append(other) { for (const node of nodes) for (const child of other.nodes) node.appendChild(child); },
             on(name, fn) { for (const node of nodes) { node.testEvents ||= {}; node.testEvents[name] = fn; } },
             trigger(name) { for (const node of nodes) node.testEvents?.[name](); }
-        };
+        }, nodes);
     }
     function $(html) {
+        if (html && typeof html !== 'string') return wrap([html]);
         const doc = new DOMParser().parseFromString('<html><body>' + html + '</body></html>', 'text/html');
         return wrap(Array.from(doc.body.children));
     }
@@ -140,6 +141,95 @@ function harness(responder, options = {}) {
             Listener: { follow(name, handler) { state.events[name] = handler; } }
         }
     };
+    if (options.episodeUI) {
+        const document = new DOMParser().parseFromString('<html><head></head><body></body></html>', 'text/html');
+        context.document = document;
+        context.window.innerHeight = 1080;
+        context.window.innerWidth = 1920;
+        state.controllers = {};
+        state.activities = [{ component: 'full', activity: {} }];
+        state.metadataRequests = [];
+        state.scrollTargets = [];
+        state.timeline = options.timelines || {};
+        const components = {};
+        context.Lampa.Component = { add(name, component) { components[name] = component; } };
+        if (!options.noExplorer) context.Lampa.Explorer = class {
+            constructor(object) {
+                this.html = document.createElement('div'); this.html.className = 'explorer';
+                this.html.innerHTML = '<aside class="explorer__left"><div class="explorer-card__title"></div></aside>' +
+                    '<section class="explorer__files"><div class="explorer__files-head"></div><div class="explorer__files-body"></div></section>';
+                this.html.querySelector('.explorer-card__title').textContent = object.movie.title;
+            }
+            render(js) { return js ? this.html : $(this.html); }
+            appendHead(node) { this.html.querySelector('.explorer__files-head').appendChild(node); }
+            appendFiles(node) { this.html.querySelector('.explorer__files-body').appendChild(node); }
+            toggle() { state.focus.push('explorer'); }
+            destroy() { this.html.remove(); }
+        };
+        context.Lampa.Scroll = class {
+            constructor() { this.html = document.createElement('div'); this.html.className = 'scroll';
+                this.html.getBoundingClientRect = () => ({ top: 220 }); }
+            render(js) { return js ? this.html : $(this.html); }
+            minus() {}
+            clear() { this.html.innerHTML = ''; }
+            reset() {}
+            append(node) { this.html.appendChild(node[0] || node); }
+            update(target) { state.scrollTargets.push(target); }
+            destroy() { this.html.remove(); }
+        };
+        context.Lampa.Controller = {
+            add(name, controller) { state.controllers[name] = controller; },
+            toggle(name) { state.focus.push(name); state.controllers[name]?.toggle?.(); },
+            collectionSet(root) { state.collection = root[0]; },
+            collectionFocus(target, root) {
+                state.focusedElement = target || root[0].querySelector('.selector');
+                state.focusedElement?.testEvents?.['hover:focus']?.();
+            }
+        };
+        context.Navigator = {
+            canmove() { return true; },
+            move(direction) {
+                const nodes = Array.from(state.collection.querySelectorAll('.selector'));
+                const index = nodes.indexOf(state.focusedElement);
+                const delta = direction === 'down' || direction === 'right' ? 1 : -1;
+                const next = nodes[Math.max(0, Math.min(nodes.length - 1, index + delta))];
+                context.Lampa.Controller.collectionFocus(next, $(state.collection));
+            }
+        };
+        context.Lampa.Activity = {
+            active() { return state.activities.at(-1); },
+            push(object) {
+                const view = new components[object.component](object);
+                object.activity = view.activity = { loader() {} };
+                object.view = view;
+                view.create();
+                document.body.appendChild(view.render(true));
+                state.activities.push(object);
+                state.view = view;
+                view.start();
+            },
+            backward() {
+                const object = state.activities.pop();
+                object.view?.destroy();
+                state.view = state.activities.at(-1).view;
+                state.view?.start();
+            }
+        };
+        context.Lampa.Api = { seasons(card, seasons, callback) {
+            state.metadataRequests.push({ card, seasons, callback });
+            if (options.seasonMetadata) options.seasonMetadata(card, seasons, callback);
+        } };
+        context.Lampa.TMDB = { image(path) { return 'https://image.tmdb.org/' + path; } };
+        context.Lampa.Timeline = {
+            view(hash) { return { hash, ...(state.timeline[hash] || {}) }; },
+            render(view) {
+                const node = document.createElement('div'); node.className = 'time-line';
+                node.setAttribute('data-hash', view.hash);
+                const fill = document.createElement('div'); fill.style.width = (view.percent || 0) + '%';
+                node.appendChild(fill); return $(node);
+            }
+        };
+    }
     vm.createContext(context);
     vm.runInContext(source, context);
     function click(suffix) {
@@ -161,7 +251,7 @@ function harness(responder, options = {}) {
         closePlayer() { player.close(); },
         externalPlay(video) { player.play(video); player.playlist([video]); },
         login() { click('login'); state.input.callback(testPassword); choose('login'); },
-        back() { select.close(); },
+        back() { if (state.menu) select.close(); else state.controllers?.content?.back(); },
         reload() { vm.runInContext(source, context); } };
 }
 
