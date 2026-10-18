@@ -220,7 +220,7 @@
         var doc = checkedDocument(html);
         var nodes = doc.querySelectorAll('.b-search__live_section li a[href], li a[href], .b-content__inline_item-link > a[href]');
         var results = [], seen = {};
-        var year = String(card.release_date || card.first_air_date || '').slice(0, 4);
+        var year = String(card.release_date || card.first_air_date || card.year || '').slice(0, 4);
         for (var i = 0; i < nodes.length; i++) {
             var path = titlePath(nodes[i].getAttribute('href'));
             if (!path || seen[path]) continue;
@@ -598,7 +598,7 @@
             run.current.stream = null;
         }
         run.current = entry;
-        rememberSeries(run.flow, run.movie, run.voice, entry.episode.season, entry.episode.episode);
+        rememberChoice(run.flow, run.movie, run.voice, entry.episode.season, entry.episode.episode);
     }
 
     function resolveEpisode(run, entry, complete) {
@@ -704,7 +704,9 @@
             video.url = quality.url;
             video.subtitles = stream.subtitles;
             if (Lampa.Player.callback) Lampa.Player.callback(function () {
-                if (!flow.cancelled) chooseQuality(flow, movie, voice, episode, stream, back, series);
+                if (flow.cancelled) return;
+                if (flow.direct && flow.episodeScreen && flow.episodeScreen.view) flow.episodeScreen.view.start();
+                else chooseQuality(flow, movie, voice, episode, stream, back, series);
             });
             Lampa.Player.play(video);
             Lampa.Player.playlist([video]);
@@ -792,8 +794,8 @@
             last = node;
             if (episode) {
                 screen.focusKey = episode.season + ':' + episode.episode;
-                scroll.update(node, true);
             }
+            if (node.classList.contains('rezka-episodes__row')) scroll.update(node, true);
         }
         function button(label, action) {
             var node = episodeNode('div', 'rezka-episodes__button selector', label);
@@ -825,8 +827,9 @@
             if (!alive()) return;
             var metadata = screen.metadata['s' + screen.season.id];
             rows.forEach(function (row) {
-                var details = metadata && metadata.episodes[row.episode.episode] || {};
-                row.title.textContent = clean(details.name) || row.episode.title;
+                var details = row.episode ? metadata && metadata.episodes[row.episode.episode] || {} :
+                    { name: screen.movie.title, runtime: flow.card.runtime, vote_average: flow.card.vote_average, air_date: flow.card.release_date };
+                row.title.textContent = clean(details.name) || (row.episode ? row.episode.title : screen.movie.title);
                 var timeline = episodeTimeline(screen.movie, row.episode) || {};
                 row.time.textContent = episodeTime(timeline, details);
                 var info = [];
@@ -862,7 +865,7 @@
             button('Назад', back);
             if (!alive()) {
                 button('Открыть HDRezka', function () { launch(object.card); });
-                scroll.append(episodeNode('div', 'rezka-episodes__empty', 'Выберите сериал и озвучку, чтобы загрузить серии.'));
+                scroll.append(episodeNode('div', 'rezka-episodes__empty', 'Откройте фильм или сериал из карточки Lampa.'));
                 return;
             }
             self.activity.loader(!!screen.loading);
@@ -878,8 +881,9 @@
             });
             toolbar.appendChild(episodeNode('div', 'rezka-episodes__source', 'Источник: HDRezka'));
             if (screen.error && screen.retry) button('Повторить', screen.retry);
-            if (!screen.data.episodes.length) {
-                scroll.append(episodeNode('div', 'rezka-episodes__empty', screen.error || screen.status || 'Загрузка серий…'));
+            var film = screen.ready && !screen.movie.series;
+            if (!film && !screen.data.episodes.length) {
+                scroll.append(episodeNode('div', 'rezka-episodes__empty', screen.error || screen.status || 'Загрузка…'));
                 (screen.candidates || []).forEach(function (candidate) {
                     var item = episodeNode('div', 'rezka-episodes__button selector', candidate.subtitle || candidate.title);
                     $(item).on('hover:focus', function () { last = item; scroll.update(item, true); });
@@ -888,16 +892,18 @@
                 });
                 return;
             }
-            screen.data.episodes.filter(function (item) { return item.season === screen.season.id; }).forEach(function (episode) {
+            var entries = film ? [null] : screen.data.episodes.filter(function (item) { return item.season === screen.season.id; });
+            entries.forEach(function (episode) {
                 var row = episodeNode('div', 'rezka-episodes__row selector');
-                row.setAttribute('data-episode', episode.season + ':' + episode.episode);
+                row.setAttribute(episode ? 'data-episode' : 'data-movie', episode ? episode.season + ':' + episode.episode : screen.movie.id);
                 var preview = episodeNode('div', 'rezka-episodes__preview');
                 var image = episodeNode('img', 'rezka-episodes__image');
                 image.alt = ''; image.setAttribute('loading', 'lazy');
                 image.onerror = function () { image.style.display = 'none'; };
                 preview.appendChild(image);
                 preview.appendChild(episodeNode('span', 'rezka-episodes__play', '▶'));
-                preview.appendChild(episodeNode('span', 'rezka-episodes__number', episode.episode.length < 2 ? '0' + episode.episode : episode.episode));
+                preview.appendChild(episodeNode('span', 'rezka-episodes__number', episode ?
+                    (episode.episode.length < 2 ? '0' + episode.episode : episode.episode) : 'Фильм'));
                 row.appendChild(preview);
                 var body = episodeNode('div', 'rezka-episodes__body');
                 var head = episodeNode('div', 'rezka-episodes__head');
@@ -911,18 +917,21 @@
                 $(row).on('hover:focus', function () { focus(row, episode); });
                 $(row).on('hover:enter', function () {
                     if (!alive() || busy) return;
-                    screen.focusKey = episode.season + ':' + episode.episode;
-                    rememberSeries(flow, screen.movie, screen.voice, episode.season, episode.episode);
+                    if (episode) {
+                        screen.focusKey = episode.season + ':' + episode.episode;
+                        rememberChoice(flow, screen.movie, screen.voice, episode.season, episode.episode);
+                    }
                     getVideo(flow, screen.movie, screen.voice, episode, function () {
-                        chooseEpisodes(flow, screen.movie, screen.voice, screen.data, screen.season, screen.back);
-                    }, { data: screen.data, back: screen.back });
+                        if (episode) chooseEpisodes(flow, screen.movie, screen.voice, screen.data, screen.season, screen.back);
+                        else self.start();
+                    }, episode ? { data: screen.data, back: screen.back } : null);
                 });
                 scroll.append(row);
                 rows.push({ episode: episode, title: title, time: time, info: info, progress: progress, image: image });
-                if (!last || screen.focusKey === episode.season + ':' + episode.episode) last = row;
+                if (!last || (episode && screen.focusKey === episode.season + ':' + episode.episode)) last = row;
             });
             self.paint();
-            metadata();
+            if (screen.movie.series) metadata();
         };
         this.resize = function () {
             if (Lampa.Layer) Lampa.Layer.update(root);
@@ -1002,8 +1011,9 @@
             var screen = flow.episodeScreen;
             if (!screen || screen.closed) screen = flow.episodeScreen = { metadata: {}, focusKey: '' };
             screen.movie = movie; screen.voice = voice; screen.data = data; screen.season = season; screen.back = back;
+            screen.ready = true;
             screen.loading = false; screen.error = ''; screen.candidates = [];
-            rememberSeries(flow, movie, voice, season.id);
+            rememberChoice(flow, movie, voice, season.id);
             if (screen.view) { screen.view.draw(); screen.view.start(); }
             else Lampa.Activity.push({ component: 'rezka_fi_episodes', title: movie.title + ' · HDRezka',
                 card: flow.card, rezka_fi_flow: flow.id, page: 1 });
@@ -1021,15 +1031,15 @@
         }, back);
     }
 
-    function seriesChoice(movie) {
+    function savedChoice(movie) {
         if (!Lampa.Storage.get || !movie.id) return {};
         var value = Lampa.Storage.get('rezka_fi_last_' + movie.id, {});
         return value && typeof value === 'object' ? value : {};
     }
 
-    function rememberSeries(flow, movie, voice, season, episode) {
+    function rememberChoice(flow, movie, voice, season, episode) {
         if (!flow.direct || !Lampa.Storage.get || !movie.id) return;
-        var old = seriesChoice(movie);
+        var old = savedChoice(movie);
         var value = { voice: voice.id, season: String(season),
             episode: episode === undefined ? (old.season === String(season) ? old.episode || '' : '') : String(episode) };
         if (old.voice !== value.voice || old.season !== value.season || old.episode !== value.episode) {
@@ -1058,7 +1068,15 @@
     function chooseVoices(flow, movie, back) {
         menu(flow, movie.title + ' · озвучка', movie.voices, function (voice) {
             var returnToVoices = function () { chooseVoices(flow, movie, back); };
-            if (!movie.series) { getVideo(flow, movie, voice, null, returnToVoices); return; }
+            if (!movie.series) {
+                if (flow.direct) {
+                    flow.episodeScreen.voice = voice;
+                    flow.episodeScreen.error = '';
+                    rememberChoice(flow, movie, voice, '', '');
+                    flow.episodeScreen.view.draw(); flow.episodeScreen.view.start();
+                } else getVideo(flow, movie, voice, null, returnToVoices);
+                return;
+            }
             loadEpisodes(flow, movie, voice, function (data) {
                 if (flow.direct) {
                     var season = defaultSeason(data, flow.episodeScreen.season.id);
@@ -1070,15 +1088,23 @@
 
     function normalizedTitle(value) {
         return clean(value).replace(/\s*\((?:19|20)\d{2}[^)]*\)\s*$/, '').toLowerCase()
-            .replace(/ё/g, 'е').replace(/[^a-z0-9а-яіїєґ\u00c0-\u024f]/g, '');
+            .replace(/ё/g, 'е').replace(/[\s\u0021-\u002f\u003a-\u0040\u005b-\u0060\u007b-\u007e\u2000-\u206f\u3000-\u303f]/g, '');
+    }
+
+    function cardType(card) {
+        if (card.media_type === 'tv' || card.original_name || card.first_air_date || card.number_of_seasons) return 'tv';
+        if (card.media_type === 'movie' || card.release_date) return 'movie';
+        return '';
     }
 
     function directMatch(results, card) {
         var titles = [card.title || card.name, card.original_title || card.original_name].map(normalizedTitle).filter(Boolean);
-        var year = String(card.first_air_date || card.release_date || '').slice(0, 4);
+        var year = String(card.first_air_date || card.release_date || card.year || '').slice(0, 4);
+        var type = cardType(card);
         var best = null, score = 0, tied = false;
         results.forEach(function (result) {
-            if (/^\/films\//.test(result.path)) return;
+            if (type === 'tv' && /^\/films\//.test(result.path)) return;
+            if (type === 'movie' && /^\/series\//.test(result.path)) return;
             var names = (result.title + '/' + result.original).split(/[\/|]/).map(normalizedTitle);
             if (!names.some(function (name) { return name && titles.indexOf(name) !== -1; })) return;
             if (year && result.year && result.year !== year) return;
@@ -1092,13 +1118,19 @@
     function openDirectResult(flow, result) {
         var screen = flow.episodeScreen;
         screen.candidates = [];
-        load(flow, 'HDRezka · загрузка сериала…', result.path, null, function (html) {
+        load(flow, 'HDRezka · загрузка…', result.path, null, function (html) {
             var movie = movieData(html, result.title);
-            if (!movie.series) throw new Error('Этот результат не является сериалом. Откройте другую карточку.');
-            var choice = seriesChoice(movie);
+            var choice = savedChoice(movie);
             var voice = movie.voices.filter(function (item) { return item.id === choice.voice; })[0] ||
                 movie.voices.filter(function (item) { return item.id === movie.defaultVoice; })[0] || movie.voices[0];
             screen.movie = movie; screen.voice = voice; screen.metadata = {};
+            if (!movie.series) {
+                screen.data = { seasons: [], episodes: [] }; screen.season = { id: '' };
+                screen.ready = true; screen.loading = false; screen.error = '';
+                rememberChoice(flow, movie, voice, '', '');
+                screen.view.draw(); screen.view.start();
+                return;
+            }
             loadEpisodes(flow, movie, voice, function (data) {
                 var season = defaultSeason(data, choice.season);
                 screen.focusKey = choice.episode ? season.id + ':' + choice.episode : '';
@@ -1126,12 +1158,11 @@
         if (!queries.length) { message('В карточке нет названия для поиска на HDRezka.'); return; }
         var flow = { id: ++flowSerial, card: card, cancelled: false, task: null };
         activeFlow = flow;
-        flow.direct = !!(Lampa.Component && Lampa.Activity && Lampa.Scroll && typeof document !== 'undefined' &&
-            (card.name || card.original_name || card.first_air_date || card.number_of_seasons || card.media_type === 'tv'));
+        flow.direct = !!(Lampa.Component && Lampa.Activity && Lampa.Scroll && typeof document !== 'undefined');
         if (flow.direct) {
             flow.results = [];
-            var screen = flow.episodeScreen = { metadata: {}, focusKey: '', loading: true, status: 'HDRezka · поиск сериала…',
-                movie: { title: title || original, voices: [], series: true }, voice: {},
+            var screen = flow.episodeScreen = { metadata: {}, focusKey: '', loading: true, ready: false, status: 'HDRezka · поиск…',
+                movie: { title: title || original, voices: [], series: null }, voice: {},
                 data: { seasons: [], episodes: [] }, season: { id: '' } };
             screen.retry = function () { flow.results = []; screen.candidates = []; search(0); };
             Lampa.Activity.push({ component: 'rezka_fi_episodes', title: (title || original) + ' · HDRezka',
@@ -1148,7 +1179,7 @@
                     if (match) openDirectResult(flow, match);
                     else if (index + 1 < queries.length) search(index + 1);
                     else if (flow.results.length) {
-                        screen.status = 'Выберите подходящий сериал по названию и году';
+                        screen.status = 'Выберите подходящий фильм или сериал по названию и году';
                         screen.candidates = flow.results;
                         screen.view.draw(); screen.view.start();
                     } else failFlow(flow, 'На HDRezka ничего не найдено по названию: ' + (title || original));
