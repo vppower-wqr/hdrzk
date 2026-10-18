@@ -12,7 +12,7 @@ const testPassword = 'fixture-pass &+=Ю';
 function harness(responder, options = {}) {
     const state = { params: [], components: [], notices: [], requests: [], menu: null,
         input: null, events: {}, writes: [], focus: [], plugins: [], played: [], playlists: [], transports: [],
-        currentVideo: null, currentPlaylist: [], playerOpen: false, nativePending: false };
+        currentVideo: null, currentPlaylist: [], playerOpen: false, nativePending: false, menus: [], saved: options.saved || {} };
     function emitter() {
         const handlers = {};
         return {
@@ -40,7 +40,7 @@ function harness(responder, options = {}) {
         abort() { this.aborted = true; if (this.onabort) this.onabort(); }
     }
     const select = {
-        show(menu) { state.menu = menu; },
+        show(menu) { state.menu = menu; state.menus.push(menu.title); },
         hide() { state.menu = null; },
         closeAll() { state.menu = null; },
         opened() { return !!state.menu; },
@@ -133,7 +133,8 @@ function harness(responder, options = {}) {
             Timeline: { view(hash) { return { hash }; } },
             SettingsApi: { addComponent(value) { state.components.push(value); }, addParam(value) { state.params.push(value); } },
             Storage: { field(key) { return key === 'playlist_next' ? !!options.playlistNext : options.noEmail ? '' : 'fixture@example.test'; },
-                set(key, value) { state.writes.push({ key, value }); } },
+                get(key, fallback) { return state.saved[key] ?? fallback; },
+                set(key, value) { state.writes.push({ key, value }); state.saved[key] = value; } },
             Noty: { show(message) { state.notices.push(message); } },
             Controller: { toggle(name) { state.focus.push(name); } },
             Select: select,

@@ -228,7 +228,11 @@
             var name = nodes[i].querySelector('.enty');
             var title = clean(name ? name.textContent : nodes[i].textContent);
             var detail = clean(nodes[i].textContent);
+            var years = detail.match(/\b(?:19|20)\d{2}\b/g);
+            var alternate = detail.match(/\(([^()]*)\)/);
             results.push({ path: path, title: title || detail, subtitle: detail,
+                year: years ? years[0] : '',
+                original: alternate ? clean(alternate[1].replace(/,?\s*(?:19|20)\d{2}.*$/, '')) : '',
                 rank: year && detail.indexOf(year) !== -1 ? 1 : 0 });
         }
         results.sort(function (a, b) { return b.rank - a.rank; });
@@ -426,6 +430,9 @@
         if (flow.cancelled) return;
         if (flow.episodeScreen && flow.episodeScreen.view && !flow.episodeScreen.closed) {
             dismiss();
+            flow.episodeScreen.loading = false;
+            flow.episodeScreen.error = error;
+            flow.episodeScreen.view.draw();
             message(error);
             flow.episodeScreen.view.start();
             return;
@@ -489,7 +496,12 @@
                 flow.episodeScreen.view.start();
             } else finishFlow(flow);
         }
-        menu(flow, title, [{ title: 'Отмена' }], cancel, cancel);
+        var screen = flow.direct && flow.episodeScreen;
+        if (screen && screen.view) {
+            screen.loading = true; screen.status = title; screen.error = '';
+            screen.view.activity.loader(true);
+            if (!screen.data.episodes.length) { screen.view.draw(); screen.view.start(); }
+        } else menu(flow, title, [{ title: 'Отмена' }], cancel, cancel);
         // A slot also works with synchronous test transports and prevents an old
         // completion from replacing a newer request's cancellation handle.
         var slot = { cancel: function () {} };
@@ -497,6 +509,7 @@
         var task = request(path, data, function (body) {
             if (flow.task === slot) flow.task = null;
             if (flow.cancelled) return;
+            if (screen) { screen.loading = false; if (screen.view) screen.view.activity.loader(false); }
             dismiss();
             try { callback(body); }
             catch (error) { failFlow(flow, error.message || 'Не удалось прочитать ответ HDRezka.'); }
@@ -585,6 +598,7 @@
             run.current.stream = null;
         }
         run.current = entry;
+        rememberSeries(run.flow, run.movie, run.voice, entry.episode.season, entry.episode.episode);
     }
 
     function resolveEpisode(run, entry, complete) {
@@ -784,7 +798,7 @@
         function button(label, action) {
             var node = episodeNode('div', 'rezka-episodes__button selector', label);
             $(node).on('hover:focus', function () { focus(node); });
-            $(node).on('hover:enter', action);
+            $(node).on('hover:enter', function () { if (!busy || action === back) action(); });
             toolbar.appendChild(node);
         }
         function back() {
@@ -851,17 +865,29 @@
                 scroll.append(episodeNode('div', 'rezka-episodes__empty', 'Выберите сериал и озвучку, чтобы загрузить серии.'));
                 return;
             }
+            self.activity.loader(!!screen.loading);
             heading.querySelector('.rezka-episodes__title').textContent = screen.movie.title;
-            button('Сезон: ' + screen.season.id, function () {
+            if (screen.data.seasons.length) button('Сезон: ' + screen.season.id, function () {
                 menu(flow, 'HDRezka · сезоны', screen.data.seasons, function (season) {
                     screen.focusKey = '';
                     chooseEpisodes(flow, screen.movie, screen.voice, screen.data, season, screen.back);
                 }, self.start);
             });
-            button('Озвучка: ' + screen.voice.title, function () {
+            if (screen.movie.voices && screen.movie.voices.length) button('Озвучка: ' + screen.voice.title, function () {
                 chooseVoices(flow, screen.movie, self.start);
             });
             toolbar.appendChild(episodeNode('div', 'rezka-episodes__source', 'Источник: HDRezka'));
+            if (screen.error && screen.retry) button('Повторить', screen.retry);
+            if (!screen.data.episodes.length) {
+                scroll.append(episodeNode('div', 'rezka-episodes__empty', screen.error || screen.status || 'Загрузка серий…'));
+                (screen.candidates || []).forEach(function (candidate) {
+                    var item = episodeNode('div', 'rezka-episodes__button selector', candidate.subtitle || candidate.title);
+                    $(item).on('hover:focus', function () { last = item; scroll.update(item, true); });
+                    $(item).on('hover:enter', function () { if (!busy) openDirectResult(flow, candidate); });
+                    scroll.append(item);
+                });
+                return;
+            }
             screen.data.episodes.filter(function (item) { return item.season === screen.season.id; }).forEach(function (episode) {
                 var row = episodeNode('div', 'rezka-episodes__row selector');
                 row.setAttribute('data-episode', episode.season + ':' + episode.episode);
@@ -884,8 +910,9 @@
                 row.appendChild(body);
                 $(row).on('hover:focus', function () { focus(row, episode); });
                 $(row).on('hover:enter', function () {
-                    if (!alive()) return;
+                    if (!alive() || busy) return;
                     screen.focusKey = episode.season + ':' + episode.episode;
+                    rememberSeries(flow, screen.movie, screen.voice, episode.season, episode.episode);
                     getVideo(flow, screen.movie, screen.voice, episode, function () {
                         chooseEpisodes(flow, screen.movie, screen.voice, screen.data, screen.season, screen.back);
                     }, { data: screen.data, back: screen.back });
@@ -906,7 +933,7 @@
         this.create = function () {
             if (screen) screen.view = self;
             self.draw();
-            self.activity.loader(false);
+            self.activity.loader(!!(screen && screen.loading));
         };
         this.start = function () {
             if (dead || !own()) return;
@@ -975,6 +1002,8 @@
             var screen = flow.episodeScreen;
             if (!screen || screen.closed) screen = flow.episodeScreen = { metadata: {}, focusKey: '' };
             screen.movie = movie; screen.voice = voice; screen.data = data; screen.season = season; screen.back = back;
+            screen.loading = false; screen.error = ''; screen.candidates = [];
+            rememberSeries(flow, movie, voice, season.id);
             if (screen.view) { screen.view.draw(); screen.view.start(); }
             else Lampa.Activity.push({ component: 'rezka_fi_episodes', title: movie.title + ' · HDRezka',
                 card: flow.card, rezka_fi_flow: flow.id, page: 1 });
@@ -992,21 +1021,90 @@
         }, back);
     }
 
+    function seriesChoice(movie) {
+        if (!Lampa.Storage.get || !movie.id) return {};
+        var value = Lampa.Storage.get('rezka_fi_last_' + movie.id, {});
+        return value && typeof value === 'object' ? value : {};
+    }
+
+    function rememberSeries(flow, movie, voice, season, episode) {
+        if (!flow.direct || !Lampa.Storage.get || !movie.id) return;
+        var old = seriesChoice(movie);
+        var value = { voice: voice.id, season: String(season),
+            episode: episode === undefined ? (old.season === String(season) ? old.episode || '' : '') : String(episode) };
+        if (old.voice !== value.voice || old.season !== value.season || old.episode !== value.episode) {
+            Lampa.Storage.set('rezka_fi_last_' + movie.id, value);
+        }
+    }
+
+    function defaultSeason(data, preferred) {
+        var chosen = data.seasons.filter(function (season) { return season.id === String(preferred); })[0];
+        return chosen || data.seasons.filter(function (season) { return Number(season.id) > 0; })[0] || data.seasons[0];
+    }
+
+    function loadEpisodes(flow, movie, voice, ready) {
+        load(flow, 'HDRezka · список серий…', '/ajax/get_cdn_series/?t=' + Date.now(),
+            formData({ id: movie.id, translator_id: voice.id, favs: movie.favs, action: 'get_episodes' }), function (body) {
+                var json;
+                try { json = JSON.parse(body); } catch (ignore) { throw new Error('Не удалось получить список серий. Проверьте сессию rezka.fi.'); }
+                if (!json || json.success === false) throw new Error('HDRezka не вернул серии для этой озвучки.');
+                var data = episodeData(String(json.seasons || ''), String(json.episodes || ''));
+                if (!data.episodes.length && !json.episodes && voice.id === movie.defaultVoice) data = movie.initialEpisodes;
+                if (!data.episodes.length) throw new Error('Для выбранной озвучки нет доступных серий.');
+                ready(data);
+            });
+    }
+
     function chooseVoices(flow, movie, back) {
         menu(flow, movie.title + ' · озвучка', movie.voices, function (voice) {
             var returnToVoices = function () { chooseVoices(flow, movie, back); };
             if (!movie.series) { getVideo(flow, movie, voice, null, returnToVoices); return; }
-            load(flow, 'HDRezka · список серий…', '/ajax/get_cdn_series/?t=' + Date.now(),
-                formData({ id: movie.id, translator_id: voice.id, favs: movie.favs, action: 'get_episodes' }), function (body) {
-                    var json;
-                    try { json = JSON.parse(body); } catch (ignore) { throw new Error('Не удалось получить список серий. Проверьте сессию rezka.fi.'); }
-                    if (!json || json.success === false) throw new Error('HDRezka не вернул серии для этой озвучки.');
-                    var data = episodeData(String(json.seasons || ''), String(json.episodes || ''));
-                    if (!data.episodes.length && !json.episodes && voice.id === movie.defaultVoice) data = movie.initialEpisodes;
-                    if (!data.episodes.length) throw new Error('Для выбранной озвучки нет доступных серий.');
-                    chooseSeasons(flow, movie, voice, data, returnToVoices);
-                });
+            loadEpisodes(flow, movie, voice, function (data) {
+                if (flow.direct) {
+                    var season = defaultSeason(data, flow.episodeScreen.season.id);
+                    chooseEpisodes(flow, movie, voice, data, season, back);
+                } else chooseSeasons(flow, movie, voice, data, returnToVoices);
+            });
         }, back);
+    }
+
+    function normalizedTitle(value) {
+        return clean(value).replace(/\s*\((?:19|20)\d{2}[^)]*\)\s*$/, '').toLowerCase()
+            .replace(/ё/g, 'е').replace(/[^a-z0-9а-яіїєґ\u00c0-\u024f]/g, '');
+    }
+
+    function directMatch(results, card) {
+        var titles = [card.title || card.name, card.original_title || card.original_name].map(normalizedTitle).filter(Boolean);
+        var year = String(card.first_air_date || card.release_date || '').slice(0, 4);
+        var best = null, score = 0, tied = false;
+        results.forEach(function (result) {
+            if (/^\/films\//.test(result.path)) return;
+            var names = (result.title + '/' + result.original).split(/[\/|]/).map(normalizedTitle);
+            if (!names.some(function (name) { return name && titles.indexOf(name) !== -1; })) return;
+            if (year && result.year && result.year !== year) return;
+            var rank = 1 + (year && result.year === year ? 2 : 0);
+            if (rank > score) { best = result; score = rank; tied = false; }
+            else if (rank === score) tied = true;
+        });
+        return tied ? null : best;
+    }
+
+    function openDirectResult(flow, result) {
+        var screen = flow.episodeScreen;
+        screen.candidates = [];
+        load(flow, 'HDRezka · загрузка сериала…', result.path, null, function (html) {
+            var movie = movieData(html, result.title);
+            if (!movie.series) throw new Error('Этот результат не является сериалом. Откройте другую карточку.');
+            var choice = seriesChoice(movie);
+            var voice = movie.voices.filter(function (item) { return item.id === choice.voice; })[0] ||
+                movie.voices.filter(function (item) { return item.id === movie.defaultVoice; })[0] || movie.voices[0];
+            screen.movie = movie; screen.voice = voice; screen.metadata = {};
+            loadEpisodes(flow, movie, voice, function (data) {
+                var season = defaultSeason(data, choice.season);
+                screen.focusKey = choice.episode ? season.id + ':' + choice.episode : '';
+                chooseEpisodes(flow, movie, voice, data, season, function () { screen.view.start(); });
+            });
+        });
     }
 
     function chooseResults(flow, results) {
@@ -1028,10 +1126,33 @@
         if (!queries.length) { message('В карточке нет названия для поиска на HDRezka.'); return; }
         var flow = { id: ++flowSerial, card: card, cancelled: false, task: null };
         activeFlow = flow;
+        flow.direct = !!(Lampa.Component && Lampa.Activity && Lampa.Scroll && typeof document !== 'undefined' &&
+            (card.name || card.original_name || card.first_air_date || card.number_of_seasons || card.media_type === 'tv'));
+        if (flow.direct) {
+            flow.results = [];
+            var screen = flow.episodeScreen = { metadata: {}, focusKey: '', loading: true, status: 'HDRezka · поиск сериала…',
+                movie: { title: title || original, voices: [], series: true }, voice: {},
+                data: { seasons: [], episodes: [] }, season: { id: '' } };
+            screen.retry = function () { flow.results = []; screen.candidates = []; search(0); };
+            Lampa.Activity.push({ component: 'rezka_fi_episodes', title: (title || original) + ' · HDRezka',
+                card: card, rezka_fi_flow: flow.id, page: 1 });
+        }
         function search(index) {
             load(flow, 'HDRezka · поиск…', '/engine/ajax/search.php', 'q=' + encodeURIComponent(queries[index]), function (html) {
                 var results = searchResults(html, card);
-                if (results.length) chooseResults(flow, results);
+                if (flow.direct) {
+                    results.forEach(function (result) {
+                        if (!flow.results.some(function (item) { return item.path === result.path; })) flow.results.push(result);
+                    });
+                    var match = directMatch(flow.results, card);
+                    if (match) openDirectResult(flow, match);
+                    else if (index + 1 < queries.length) search(index + 1);
+                    else if (flow.results.length) {
+                        screen.status = 'Выберите подходящий сериал по названию и году';
+                        screen.candidates = flow.results;
+                        screen.view.draw(); screen.view.start();
+                    } else failFlow(flow, 'На HDRezka ничего не найдено по названию: ' + (title || original));
+                } else if (results.length) chooseResults(flow, results);
                 else if (index + 1 < queries.length) search(index + 1);
                 else failFlow(flow, 'На HDRezka ничего не найдено по названию: ' + (title || original));
             });
