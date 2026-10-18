@@ -62,6 +62,4 @@ https://cdn.jsdelivr.net/gh/vppower-wqr/hdrzk@main/docs/rezka-fi.js
 
 ## Разработка
 
-.
-
 Использованы интерфейсы из [исходников Lampa](https://github.com/yumata/lampa-source). Реализация написана отдельно. Лицензия этого проекта — MIT.
